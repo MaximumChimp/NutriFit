@@ -8,17 +8,19 @@ import {
   Cog6ToothIcon,
   UserIcon,
   ChevronDownIcon,
-  TruckIcon,
+  MapPinIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 import Icon from '../assets/images/admin.png'
+import { signOut } from 'firebase/auth'
+import { auth } from '../../firebase-config' 
 
 
 
 const navItems = [
   { name: 'Dashboard', to: '/dashboard', icon: HomeIcon, label: 'Dashboard' },
   { name: 'Meals', to: '/meals', icon: ClipboardDocumentIcon, label: 'Meals' },
-  { name: 'Rider', to: '/rider', icon: TruckIcon, label: 'Rider' },
+  { name: 'Delivery', to: '/delivery', icon: MapPinIcon, label: 'Delivery' },
   { name: 'Settings', to: '/settings', icon: Cog6ToothIcon, label: 'Settings' }
 ]
 
@@ -27,6 +29,10 @@ export default function Sidebar() {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
   const navigate = useNavigate()
+
+
+  const user = JSON.parse(localStorage.getItem('nutrifit_user')) || {}
+  const { username, role } = user
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -97,8 +103,8 @@ export default function Sidebar() {
                 className="h-10 w-10 rounded-full object-cover mr-3"
               />
               <div>
-                <p className="text-sm font-medium text-gray-800">John Doe</p>
-                <p className="text-xs text-gray-500">Admin</p>
+                <p className="text-sm font-medium text-gray-800">{username || 'Unknown'}</p>
+                <p className="text-xs text-gray-500">{role || 'No Role'}</p>
               </div>
             </div>
 
@@ -135,10 +141,17 @@ export default function Sidebar() {
                   <button
                     type="button"
                     className="flex items-center w-full px-4 py-2 hover:bg-indigo-100 transition"
-                    onClick={() => {
+                  onClick={async () => {
                       setDropdownOpen(false)
-                      navigate('/')
+                      try {
+                        await signOut(auth)
+                        localStorage.removeItem('nutrifit_user') // or clear() if you want to wipe all
+                        navigate('/')
+                      } catch (err) {
+                        console.error('Logout failed:', err)
+                      }
                     }}
+
                   >
                     <ArrowRightOnRectangleIcon className="h-5 w-5 mr-2" />
                     Logout

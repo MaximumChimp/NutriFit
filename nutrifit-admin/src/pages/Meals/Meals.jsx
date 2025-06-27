@@ -1,300 +1,468 @@
 import { useState, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
-import { FiUploadCloud } from 'react-icons/fi' // Icon
-import grilledSalmon from '../../assets/images/grilledSalmon.jpg'
-import avocadotoast from '../../assets/images/avocadotoast.jpg'
-const defaultMeals = [
-  {
-    mealName: 'Grilled Salmon',
-    description: 'Healthy omega-3 rich fish with lemon sauce',
-    calories: 320,
-    category: 'Lunch',
-    dietType: 'Low Carb',
-    goodFor: ['Heart Health', 'Diabetes'],
-    image: grilledSalmon,
-    available: true,
-  },
-  {
-    mealName: 'Avocado Toast',
-    description: 'Toasted bread with fresh avocado and poached egg',
-    calories: 250,
-    category: 'Breakfast',
-    dietType: 'Balanced',
-    goodFor: ['Weight Loss', 'Energy Boost'],
-    image: avocadotoast,
-    available: true,
-  },
-]
+import { FiUploadCloud } from 'react-icons/fi'
+import { collection, addDoc, getDocs, deleteDoc, doc ,serverTimestamp,query, orderBy} from 'firebase/firestore'
+import { db } from '../../../firebase-config'
+import { v4 as uuidv4 } from 'uuid'
 
 const categories = ['All', 'Breakfast', 'Lunch', 'Dinner']
 
+const MealCardSkeleton = () => (
+  <div className="bg-white rounded-xl shadow overflow-hidden flex flex-col h-full animate-pulse">
+    <div className="relative h-40 sm:h-48 md:h-60 lg:h-72 w-full shimmer bg-gray-200" />
+    <div className="p-4 flex flex-col flex-grow space-y-2">
+      <div className="h-4 w-3/4 bg-gray-200 rounded" />
+      <div className="h-3 w-full bg-gray-200 rounded" />
+      <div className="h-3 w-5/6 bg-gray-200 rounded" />
+      <div className="h-4 w-16 mt-1 bg-gray-200 rounded" />
+      <div className="flex flex-wrap gap-1 mt-1">
+        <div className="h-5 w-16 bg-gray-200 rounded-full" />
+        <div className="h-5 w-20 bg-gray-200 rounded-full" />
+        <div className="h-5 w-14 bg-gray-200 rounded-full" />
+      </div>
+    </div>
+  </div>
+)
+
 export default function Meals() {
+  // --- State ---
+  const [meals, setMeals] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [activeFilter, setActiveFilter] = useState('All')
+  const [filterTag, setFilterTag] = useState('')
+  const [allTags, setAllTags] = useState([]);
+  const [showModal, setShowModal] = useState(false)
+  const [editIndex, setEditIndex] = useState(null)
   const [mealName, setMealName] = useState('')
   const [description, setDescription] = useState('')
   const [calories, setCalories] = useState('')
+  const [price, setPrice] = useState('')
   const [category, setCategory] = useState('Breakfast')
   const [dietType, setDietType] = useState('Balanced')
-  const [newDietType, setNewDietType] = useState('')
-  const [dietTypes, setDietTypes] = useState(['Keto', 'Vegan', 'Low Carb', 'Balanced'])
-  const [showAddDietModal, setShowAddDietModal] = useState(false)
-
   const [goodFor, setGoodFor] = useState([])
-  const [newTag, setNewTag] = useState('')
-  const [allTags, setAllTags] = useState([
-    'Diabetes', 'Hypertension', 'Heart Health', 'Weight Loss', 'Muscle Gain', 'Energy Boost',
-  ])
-  const [showAddTagModal, setShowAddTagModal] = useState(false)
-
+  const [available, setAvailable] = useState(true)
   const [image, setImage] = useState(null)
   const [preview, setPreview] = useState(null)
-  const [meals, setMeals] = useState([])
-  const [showModal, setShowModal] = useState(false)
-  const [activeFilter, setActiveFilter] = useState('All')
-  const [filterTag, setFilterTag] = useState('')
-  const [editIndex, setEditIndex] = useState(null)
-
+  const [dietTypes, setDietTypes] = useState(['Balanced', 'Keto', 'Vegan', 'Low Carb', 'Paleo']);
+  const [showAddDietModal, setShowAddDietModal] = useState(false);
+  const [newDietType, setNewDietType] = useState('');
+  const [showAddTagModal, setShowAddTagModal] = useState(false);
+  const [newTag, setNewTag] = useState('');
   const dropRef = useRef()
   const fileInputRef = useRef()
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+const [deleteIndex, setDeleteIndex] = useState(null);
+
+
+useEffect(() => {
+  const DEFAULT_DIET_TYPES = ['Balanced', 'Keto', 'Vegan', 'Low Carb', 'Paleo']
+
+  const fetchAndEnsureDietTypes = async () => {
+    try {
+      // 1. Ensure default diet types are in Firestore
+      const snapshot = await getDocs(collection(db, 'dietTypes'))
+      const namesInDb = snapshot.docs.map(doc => doc.data().name?.trim())
+
+      const missingDefaults = DEFAULT_DIET_TYPES.filter(
+        name => !namesInDb.includes(name)
+      )
+
+      for (const name of missingDefaults) {
+        await addDoc(collection(db, 'dietTypes'), {
+          name,
+          createdAt: serverTimestamp()
+        })
+      }
+
+      // 2. Fetch all sorted by createdAt
+      const sortedSnapshot = await getDocs(
+        query(collection(db, 'dietTypes'), orderBy('createdAt', 'asc'))
+      )
+
+      const sortedNames = sortedSnapshot.docs
+        .map(d => d.data().name?.trim())
+        .filter(Boolean)
+
+      // 3. Move defaults to front, preserve custom order
+      const custom = sortedNames.filter(name => !DEFAULT_DIET_TYPES.includes(name))
+      setDietTypes([...DEFAULT_DIET_TYPES, ...custom])
+    } catch (err) {
+      console.error('Error fetching diet types:', err)
+      toast.error('Failed to load diet types')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  fetchAndEnsureDietTypes()
+}, [])
+
+
+  // --- Fetch Meals ---
+  const fetchMeals = async () => {
+    setLoading(true)
+    try {
+      const snapshot = await getDocs(collection(db, 'meals'))
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+      setMeals(data)
+    } catch (err) {
+      toast.error("Failed to load meals")
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    setMeals(defaultMeals)
+    fetchMeals()
   }, [])
 
-  const handleImageChange = (file) => {
-    if (file) {
-      setImage(file)
-      setPreview(URL.createObjectURL(file))
-    }
-  }
 
-  const onFileInputChange = (e) => handleImageChange(e.target.files[0])
-  const onDrop = (e) => {
-    e.preventDefault()
-    handleImageChange(e.dataTransfer.files[0])
-  }
-  const allowDragOver = (e) => e.preventDefault()
+const fetchTags = async () => {
+  try {
+    const snap = await getDocs(query(collection(db, 'tags'), orderBy('createdAt', 'asc')));
+    let tags = snap.docs
+      .map(doc => doc.data().name?.trim())
+      .filter(Boolean)
+      .map(name => name.replace(/\b\w/g, l => l.toUpperCase())); // format consistently
 
-  const toggleTag = (tag) => {
-    setGoodFor((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    )
-  }
+    // Remove duplicates (case-insensitive)
+    tags = [...new Set(tags.map(t => t.toLowerCase()))].map(t =>
+      t.replace(/\b\w/g, l => l.toUpperCase())
+    );
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    const newMeal = {
-      mealName,
-      description,
-      calories,
-      category,
-      dietType,
-      goodFor,
-      image: preview,
+    if (tags.length === 0) {
+      const defaultTags = ['Diabetes', 'Hypertension', 'Heart Health', 'Weight Loss', 'Muscle Gain', 'Energy Boost'];
+      for (const tag of defaultTags) {
+        await addDoc(collection(db, 'tags'), { name: tag, createdAt: serverTimestamp() });
+      }
+      tags = defaultTags;
     }
 
-    const updated = [...meals]
-    if (editIndex !== null) {
-      updated[editIndex] = newMeal
-      toast.success('Meal updated!')
-    } else {
-      updated.unshift(newMeal)
-      toast.success('Meal added!')
-    }
-
-    setMeals(updated)
-    resetForm()
+    setAllTags(tags);
+  } catch (err) {
+    toast.error("Failed to load tags.");
+    console.error(err);
   }
+};
 
+
+useEffect(() => {
+  fetchTags()
+}, [])
+
+  // --- Handlers ---
   const resetForm = () => {
-    setMealName('')
-    setDescription('')
-    setCalories('')
-    setCategory('Breakfast')
-    setDietType('Balanced')
-    setGoodFor([])
-    setImage(null)
-    setPreview(null)
-    setShowModal(false)
-    setEditIndex(null)
-    setNewTag('')
-    setNewDietType('')
+    setMealName(''); setDescription('')
+    setCalories(''); setPrice('')
+    setCategory('Breakfast'); setDietType('Balanced')
+    setGoodFor([]); setAvailable(true)
+    setImage(null); setPreview(null); setEditIndex(null)
   }
 
-  const handleDelete = (index) => {
-    if (confirm('Delete this meal?')) {
-      const updated = meals.filter((_, i) => i !== index)
-      setMeals(updated)
-      toast.success('Meal deleted')
+  const toggleTag = tag =>
+    setGoodFor(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])
+
+  const onFileInputChange = e => {
+    const f = e.target.files?.[0]
+    if (f) {
+      setImage(f)
+      setPreview(URL.createObjectURL(f))
     }
   }
 
-  const handleEdit = (index) => {
-    const meal = meals[index]
-    setMealName(meal.mealName)
-    setDescription(meal.description)
-    setCalories(meal.calories)
-    setCategory(meal.category)
-    setDietType(meal.dietType)
-    setGoodFor(meal.goodFor || [])
-    setPreview(meal.image)
-    setEditIndex(index)
-    setShowModal(true)
+  const onDrop = e => {
+    e.preventDefault()
+    if (e.dataTransfer.files.length) {
+      setImage(e.dataTransfer.files[0])
+      setPreview(URL.createObjectURL(e.dataTransfer.files[0]))
+    }
+  }
+  const allowDragOver = e => e.preventDefault()
+
+  const handleEdit = idx => {
+    const m = meals[idx]
+    setMealName(m.mealName); setDescription(m.description)
+    setCalories(m.calories); setPrice(m.price)
+    setCategory(m.category); setDietType(m.dietType)
+    setGoodFor(m.goodFor || []); setAvailable(m.available)
+    setPreview(m.image); setEditIndex(idx); setShowModal(true)
   }
 
-  const filteredMeals = meals.filter((meal) => {
-    const matchCategory = activeFilter === 'All' || meal.category === activeFilter
-    const matchTag = filterTag ? meal.goodFor?.includes(filterTag) : true
-    return matchCategory && matchTag
-  })
+  const handleSubmit = async e => {
+    e.preventDefault()
+    try {
+      let imgUrl = preview
+      if (image) {
+        const ext = image.name.split('.').pop()
+        const fname = `${uuidv4()}.${ext}`
+        const fd = new FormData()
+        fd.append('file', image, fname)
+        const res = await fetch('http://localhost:8081/api/uploads/meal-image', {
+          method: 'POST', body: fd
+        })
+        if (!res.ok) throw new Error()
+        const fn = await res.text()
+        imgUrl = `http://localhost:8081/uploads/${fn}`
+      }
+      const obj = {
+        mealName, description,
+        calories: +calories, price: +price,
+        category, dietType, goodFor,
+        available, image: imgUrl
+      }
+
+      if (editIndex !== null) {
+        const id = meals[editIndex].id
+        await deleteDoc(doc(db, 'meals', id))
+        const newDoc = await addDoc(collection(db, 'meals'), obj)
+        const arr = [...meals]; arr[editIndex] = { id: newDoc.id, ...obj }
+        setMeals(arr)
+        toast.success('Meal updated!')
+      } else {
+        const newDoc = await addDoc(collection(db, 'meals'), obj)
+        setMeals([{ id: newDoc.id, ...obj }, ...meals])
+        toast.success('Meal added!')
+      }
+
+      resetForm(); setShowModal(false)
+    } catch {
+      toast.error('Save failed')
+    }
+  }
+
+const confirmDelete = (idx) => {
+  setDeleteIndex(idx);
+  setShowDeleteModal(true);
+};
+
+const handleDelete = async () => {
+  const m = meals[deleteIndex];
+  if (!m) return;
+
+  try {
+    // 1. Delete image from uploads folder
+    const imageFilename = m.image?.split('/').pop();
+    if (imageFilename) {
+      const res = await fetch(`http://localhost:8081/api/uploads/meal-image/${imageFilename}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('Failed to delete image from server');
+    }
+
+    // 2. Delete Firestore document
+    await deleteDoc(doc(db, 'meals', m.id));
+
+    // 3. Update local state
+    setMeals(prev => prev.filter((_, i) => i !== deleteIndex));
+    toast.success('Meal deleted!');
+  } catch (err) {
+    console.error(err);
+    toast.error('Failed to delete meal.');
+  } finally {
+    setShowDeleteModal(false);
+    setDeleteIndex(null);
+  }
+};
+
+
+  const filtered = meals.filter(m =>
+    (activeFilter === 'All' || m.category === activeFilter) &&
+    (!filterTag || m.goodFor.includes(filterTag))
+  )
 
   return (
-    <div className="p-6 bg-gray-100 min-h-screen">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold text-indigo-600">Meals</h1>
-        <button
-          onClick={() => setShowModal(true)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500"
-        >
-          + Add Meal
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="mb-6 flex gap-3 flex-wrap">
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            className={`px-4 py-1.5 rounded-full text-sm ${activeFilter === cat ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-700'}`}
-            onClick={() => setActiveFilter(cat)}
-          >
-            {cat}
+    <>
+      <div className="p-6 bg-gray-100 min-h-screen">
+        {/* Header + Filters */}
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold">Meals</h1>
+          <button onClick={() => { resetForm(); setShowModal(true) }}
+            className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-500">
+            + Add Meal
           </button>
-        ))}
-        <select
-          onChange={(e) => setFilterTag(e.target.value)}
-          className="ml-auto border px-3 py-1.5 rounded-md text-sm"
-        >
-          <option value="">All Health Tags</option>
-          {allTags.map((tag) => (
-            <option key={tag} value={tag}>{tag}</option>
+        </div>
+        <div className="flex flex-wrap gap-3 mb-6">
+          {categories.map(cat => (
+            <button key={cat} onClick={() => setActiveFilter(cat)}
+              className={`px-4 py-1.5 rounded-full text-sm ${
+                activeFilter === cat ? 'bg-indigo-600 text-white' : 'bg-white border text-gray-700'
+              }`}>
+              {cat}
+            </button>
           ))}
-        </select>
+          <select onChange={e => setFilterTag(e.target.value)}
+            className="border ml-auto px-3 py-1.5 rounded text-sm">
+            <option value="">All Health Tags</option>
+            {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+
+        {/* Meals Grid */}
+        {loading ? (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => <MealCardSkeleton key={i} />)}
+          </div>
+        ) : filtered.length ? (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((m, i) => (
+              <div key={i} className="bg-white rounded-xl shadow group relative flex flex-col h-full">
+                <div className="relative h-40 sm:h-48 md:h-60 lg:h-72">
+                  <img src={m.image} alt={m.mealName}
+                    className={`h-full w-full object-cover ${!m.available && 'opacity-50 grayscale'}`} />
+                  {!m.available && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-lg font-bold">
+                      Unavailable
+                    </span>
+                  )}
+                </div>
+                <div className="p-4 flex flex-col flex-grow">
+                  <h3 className="font-bold text-lg">{m.mealName}</h3>
+                  <p className="text-sm text-gray-600 line-clamp-2">{m.description}</p>
+                  <div className="flex justify-between mt-2">
+                    <span className="text-sm text-gray-500">
+                      {m.calories} cal · {m.category} · {m.dietType}
+                    </span>
+                    <span className="text-sm text-green-600 font-semibold">
+                      ₱{m.price.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {m.goodFor.map(t => (
+                      <span key={t} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                  <button onClick={() => handleEdit(i)} className="bg-yellow-400 text-white px-2 py-1 rounded text-xs">Edit</button>
+                  <button onClick={() => confirmDelete(i)} className="bg-red-500 text-white px-2 py-1 rounded text-xs">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-center text-gray-500 mt-8">No meals available.</p>
+        )}
       </div>
 
-      {/* Meals List */}
-      {filteredMeals.length > 0 ? (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredMeals.map((meal, idx) => (
-            <div key={idx} className="bg-white rounded-xl shadow group overflow-hidden relative">
-              <img src={meal.image} alt={meal.mealName} className="h-40 w-full object-cover" />
-              <div className="p-4">
-                <h3 className="text-lg font-bold text-indigo-600">{meal.mealName}</h3>
-                <p className="text-sm text-gray-600">{meal.description}</p>
-                <div className="flex justify-between items-center flex-wrap mt-2">
-                <div className="text-sm text-gray-500">
-                    {meal.calories} cal · {meal.category} · {meal.dietType}
-                </div>
-                <div className="flex flex-wrap gap-1 justify-end mt-1 sm:mt-0">
-                    {meal.goodFor.map((tag) => (
-                    <span
-                        key={tag}
-                        className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full"
-                    >
-                        {tag}
-                    </span>
-                    ))}
-                </div>
-                </div>
-              </div>
-              <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                <button onClick={() => handleEdit(idx)} className="bg-yellow-400 text-white text-xs px-2 py-1 rounded">Edit</button>
-                <button onClick={() => handleDelete(idx)} className="bg-red-500 text-white text-xs px-2 py-1 rounded">Delete</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-gray-500">No meals available.</p>
-      )}
-
-      {/* Modal for Add/Edit */}
+      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-2xl p-6 rounded-xl shadow-xl relative">
-            <button onClick={resetForm} className="absolute top-3 right-4 text-gray-400 hover:text-red-500 text-xl">
+          <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-xl relative overflow-auto max-h-screen">
+            <button onClick={() => setShowModal(false)}
+              className="absolute top-3 right-4 text-xl text-gray-400 hover:text-red-500">
               &times;
             </button>
-            <h2 className="text-2xl font-bold text-indigo-600 mb-4">
+            <h2 className="text-2xl font-bold mb-4 text-indigo-600">
               {editIndex !== null ? 'Edit Meal' : 'Add New Meal'}
             </h2>
 
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input type="text" value={mealName} onChange={(e) => setMealName(e.target.value)} placeholder="Meal Name" className="w-full border-b px-2 py-2" required />
-              <input type="number" value={calories} onChange={(e) => setCalories(e.target.value)} placeholder="Calories" className="w-full border-b px-2 py-2" required />
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full border-b px-2 py-2">
-                {categories.slice(1).map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-              </select>
-              <select
-                value={dietType}
-                onChange={(e) => {
-                  if (e.target.value === '__add_new__') {
-                    setShowAddDietModal(true)
-                  } else {
-                    setDietType(e.target.value)
-                  }
-                }}
-                className="w-full border-b px-2 py-2"
-              >
-                {dietTypes.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-                <option value="__add_new__">+ Add new diet type</option>
-              </select>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="col-span-1 md:col-span-2 border-b px-2 py-2 resize-none" />
+              <input type="text" value={mealName} onChange={e => setMealName(e.target.value)}
+                placeholder="Meal Name" className="w-full border-b px-2 py-2" required />
 
-              {/* Tag Checkboxes + Add New */}
+              <input type="number" value={calories} onChange={e => setCalories(e.target.value)}
+                placeholder="Calories" className="w-full border-b px-2 py-2" required />
+
+              <input type="number" value={price} onChange={e => setPrice(e.target.value)}
+                placeholder="Price (₱)" className="w-full border-b px-2 py-2" required />
+
+              <select value={category} onChange={e => setCategory(e.target.value)}
+                className="w-full border-b px-2 py-2">
+                {categories.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {/* ...inside your form layout in the modal... */}
+
+        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Diet Type */}
+       <select
+  value={dietType}
+  onChange={(e) => {
+    const value = e.target.value;
+    if (value === '__add_new__') {
+      setShowAddDietModal(true);
+      return;
+    }
+    setDietType(value);
+  }}
+  className="w-full border-b px-2 py-2"
+>
+  {dietTypes.map((type) => (
+    <option key={type} value={type}>{type}</option>
+  ))}
+  <option value="__add_new__" className="text-indigo-600">+ Add new diet type</option>
+</select>
+
+
+        {/* Availability */}
+        <select
+          value={available ? 'Available' : 'Unavailable'}
+          onChange={(e) => setAvailable(e.target.value === 'Available')}
+          className="w-full border-b px-2 py-2"
+        >
+          <option value="Available">Available</option>
+          <option value="Unavailable">Unavailable</option>
+        </select>
+      </div>
+
+
+
+              <textarea value={description} onChange={e => setDescription(e.target.value)}
+                placeholder="Description" className="col-span-1 md:col-span-2 border-b px-2 py-2 resize-none" />
+
               <div className="col-span-1 md:col-span-2">
                 <div className="flex flex-wrap gap-2 items-center mb-2">
-                  {allTags.map((tag) => (
-                    <label key={tag} className="text-sm">
-                      <input type="checkbox" checked={goodFor.includes(tag)} onChange={() => toggleTag(tag)} className="mr-1" />
-                      {tag}
-                    </label>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setShowAddTagModal(true)}
-                    className="text-sm text-indigo-600 hover:underline ml-2"
-                  >
-                    + Add new health condition
-                  </button>
+                  {allTags.map(tag => (
+  <label key={tag} className="text-sm">
+    <input type="checkbox" checked={goodFor.includes(tag)}
+      onChange={() => toggleTag(tag)} className="mr-1" />
+    {tag}
+  </label>
+))}
+
+<button
+  type="button"
+  onClick={() => setShowAddTagModal(true)}
+  className="text-indigo-600 text-sm underline ml-2"
+>
+  + Add new tag
+</button>
+
                 </div>
               </div>
 
-              {/* Image Upload */}
-              <div
-                ref={dropRef}
-                onClick={() => fileInputRef.current.click()}
-                onDrop={onDrop}
-                onDragOver={allowDragOver}
-                className="col-span-1 md:col-span-2 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center text-sm text-gray-500 cursor-pointer hover:bg-indigo-50 transition"
-              >
-                <FiUploadCloud className="text-3xl mx-auto mb-2 text-indigo-500" />
-                Click or drag & drop image here
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={onFileInputChange}
-                  className="hidden"
-                  ref={fileInputRef}
-                />
-              </div>
+            <div
+  ref={dropRef}
+  onClick={() => fileInputRef.current?.click()}
+  onDrop={onDrop}
+  onDragOver={allowDragOver}
+  className="col-span-1 md:col-span-2 border-2 border-dashed border-gray-300 rounded-lg p-6 text-center text-sm text-gray-500 cursor-pointer hover:bg-indigo-50 transition"
+>
+  <FiUploadCloud className="text-3xl mx-auto mb-2 text-indigo-500" />
+  <p>Click or drag & drop image here</p>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={onFileInputChange}
+    className="hidden"
+    ref={fileInputRef}
+  />
+</div>
 
-              {preview && <img src={preview} alt="Preview" className="mt-3 w-full h-32 object-cover rounded-md shadow col-span-1 md:col-span-2" />}
+
+              {preview && (
+                <img src={preview} alt="Preview"
+                  className="mt-3 w-full h-32 object-cover rounded-md shadow col-span-1 md:col-span-2" />
+              )}
 
               <div className="col-span-1 md:col-span-2 flex justify-end">
-                <button type="submit" className="bg-indigo-600 text-white font-semibold px-6 py-2 rounded-md hover:bg-indigo-500">
+                <button type="submit"
+                  className="bg-indigo-600 text-white font-semibold px-6 py-2 rounded-md hover:bg-indigo-500">
                   {editIndex !== null ? 'Update Meal' : 'Add Meal'}
                 </button>
               </div>
@@ -302,67 +470,137 @@ export default function Meals() {
           </div>
         </div>
       )}
-
-      {/* Add Diet Type Modal */}
       {showAddDietModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-sm p-6 rounded-xl shadow-xl relative">
-            <button onClick={() => setShowAddDietModal(false)} className="absolute top-3 right-4 text-gray-400 hover:text-red-500 text-xl">
-              &times;
-            </button>
-            <h2 className="text-xl font-semibold text-indigo-600 mb-4">Add New Diet Type</h2>
-            <input type="text" value={newDietType} onChange={(e) => setNewDietType(e.target.value)} placeholder="Enter diet type" className="w-full border px-3 py-2 rounded-md mb-4" />
-            <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  if (newDietType && !dietTypes.includes(newDietType)) {
-                    setDietTypes([...dietTypes, newDietType])
-                    setDietType(newDietType)
-                    setNewDietType('')
-                    setShowAddDietModal(false)
-                    toast.success(`Diet type "${newDietType}" added`)
-                  } else {
-                    toast.error('Invalid or duplicate diet type')
-                  }
-                }}
-                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-500"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-md relative">
+      <button onClick={() => setShowAddDietModal(false)}
+        className="absolute top-3 right-4 text-xl text-gray-400 hover:text-red-500">
+        &times;
+      </button>
+      <h2 className="text-lg font-bold mb-4 text-indigo-600">Add New Diet Type</h2>
+<form onSubmit={async (e) => {
+  e.preventDefault();
+  let type = newDietType.trim();
+  if (!type) return toast.error("Enter a valid diet type.");
 
-      {/* Add Tag Modal */}
-      {showAddTagModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-sm p-6 rounded-xl shadow-xl relative">
-            <button onClick={() => setShowAddTagModal(false)} className="absolute top-3 right-4 text-gray-400 hover:text-red-500 text-xl">
-              &times;
-            </button>
-            <h2 className="text-xl font-semibold text-indigo-600 mb-4">Add New Health Condition</h2>
-            <input type="text" value={newTag} onChange={(e) => setNewTag(e.target.value)} placeholder="Enter health condition" className="w-full border px-3 py-2 rounded-md mb-4" />
-            <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  if (newTag && !allTags.includes(newTag)) {
-                    setAllTags([...allTags, newTag])
-                    toast.success(`Tag "${newTag}" added`)
-                    setNewTag('')
-                    setShowAddTagModal(false)
-                  } else {
-                    toast.error('Invalid or duplicate tag')
-                  }
-                }}
-                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-500"
-              >
-                Add
-              </button>
-            </div>
-          </div>
+  // Capitalize each word
+  type = type.replace(/\b\w/g, l => l.toUpperCase());
+
+  // Check for duplicates (case-insensitive match on formatted type)
+  const exists = dietTypes.some(t => t.trim().toLowerCase() === type.toLowerCase());
+  if (exists) {
+    toast.error("Diet type already exists.");
+    return;
+  }
+
+  try {
+    await addDoc(collection(db, 'dietTypes'), { name: type, createdAt: serverTimestamp() });
+    setDietTypes(prev => [...prev, type]);
+    setDietType(type);
+    setNewDietType('');
+    setShowAddDietModal(false);
+    toast.success("Diet type added!");
+  } catch {
+    toast.error("Failed to add diet type.");
+  }
+}}>
+
+
+        <input
+          type="text"
+          value={newDietType}
+          onChange={(e) => setNewDietType(e.target.value)}
+          placeholder="e.g. Mediterranean"
+          className="w-full border-b px-3 py-2 mb-4"
+        />
+        <div className="flex justify-end">
+          <button type="submit" className="bg-indigo-600 text-white px-5 py-2 rounded hover:bg-indigo-500">
+            Add
+          </button>
         </div>
-      )}
+      </form>
     </div>
+  </div>
+      )}
+      {showAddTagModal && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-md relative">
+      <button onClick={() => setShowAddTagModal(false)}
+        className="absolute top-3 right-4 text-xl text-gray-400 hover:text-red-500">
+        &times;
+      </button>
+      <h2 className="text-lg font-bold mb-4 text-indigo-600">Add New Tag</h2>
+      <form onSubmit={async (e) => {
+  e.preventDefault();
+  let tag = newTag.trim();
+  if (!tag) return toast.error("Tag name required.");
+
+  // Capitalize properly before checking for duplicates
+  tag = tag.replace(/\b\w/g, l => l.toUpperCase());
+
+  // Check if tag already exists (case-insensitive match on formatted tag)
+  const exists = allTags.some(t => t.trim().toLowerCase() === tag.toLowerCase());
+  if (exists) {
+    toast.error("Tag already exists.");
+    return;
+  }
+
+  try {
+    await addDoc(collection(db, 'tags'), { name: tag, createdAt: serverTimestamp() });
+    setAllTags(prev => [...prev, tag]);
+    setGoodFor(prev => [...prev, tag]);
+    setNewTag('');
+    setShowAddTagModal(false);
+    toast.success("Tag added!");
+  } catch {
+    toast.error("Failed to add tag.");
+  }
+}}>
+        <input
+          type="text"
+          value={newTag}
+          onChange={(e) => setNewTag(e.target.value)}
+          placeholder="e.g. Immunity Boost"
+          className="w-full border-b px-3 py-2 mb-4"
+        />
+        <div className="flex justify-end">
+          <button type="submit" className="bg-indigo-600 text-white px-5 py-2 rounded hover:bg-indigo-500">
+            Add
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+      )}
+      {showDeleteModal && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm text-center relative">
+      <h2 className="text-xl font-bold text-red-600 mb-4">Confirm Delete</h2>
+      <p className="mb-6 text-gray-700">
+        Are you sure you want to delete this meal?
+      </p>
+      <div className="flex justify-center gap-4">
+        
+        <button
+          onClick={handleDelete}
+          className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+        >
+          Yes
+        </button>
+        <button
+          onClick={() => {
+            setShowDeleteModal(false);
+            setDeleteIndex(null);
+          }}
+          className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+    </>
   )
 }
