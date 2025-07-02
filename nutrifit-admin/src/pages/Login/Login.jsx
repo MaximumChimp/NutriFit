@@ -13,7 +13,7 @@ import {
   where,
   setDoc,
 } from 'firebase/firestore'
-import { auth, db } from '../../../firebase-config'
+import { auth, db } from '../../../firebase-config.web'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import Icon from '../../assets/images/Icon.png'
 import toast from 'react-hot-toast'

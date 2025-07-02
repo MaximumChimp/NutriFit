@@ -13,7 +13,7 @@ import {
 } from '@heroicons/react/24/outline'
 import Icon from '../assets/images/admin.png'
 import { signOut } from 'firebase/auth'
-import { auth } from '../../firebase-config' 
+import { auth } from '../../firebase-config.web' 
 
 
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { FiUploadCloud } from 'react-icons/fi'
 import { collection, addDoc, getDocs, deleteDoc, doc ,serverTimestamp,query, orderBy} from 'firebase/firestore'
-import { db } from '../../../firebase-config'
+import { db } from '../../../firebase-config.web'
 import { v4 as uuidv4 } from 'uuid'
 
 const categories = ['All', 'Breakfast', 'Lunch', 'Dinner']
