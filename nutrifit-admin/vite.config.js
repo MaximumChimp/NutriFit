@@ -6,5 +6,11 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss()
-  ],
+  ],build: {
+    outDir: 'dist'
+  },
+  // 👇 This is optional if you use vercel.json, but still good for dev
+  server: {
+    historyApiFallback: true
+  }
 })
